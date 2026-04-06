@@ -1,0 +1,35 @@
+node_modules/
+dist/
+*.js
+*.d.ts
+*.js.map
+
+# Bun
+bun.lockb
+
+# Credentials & tokens (NEVER commit these)
+credentials/
+client_secret*.json
+token.json
+*.pem
+*.key
+
+# State files
+.email-bouncer/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.*
+
+# Output files
+invalid.csv

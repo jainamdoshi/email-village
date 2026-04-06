@@ -1,0 +1,23 @@
+{
+  "name": "email-bouncer",
+  "version": "0.1.0",
+  "description": "CLI tool to filter bounced emails from Gmail and clean CSV email lists",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "commander": "^12.0.0",
+    "csv-parse": "^5.5.0",
+    "csv-stringify": "^6.4.0",
+    "google-auth-library": "^9.0.0",
+    "googleapis": "^140.0.0",
+    "open": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.5.0"
+  }
+}
