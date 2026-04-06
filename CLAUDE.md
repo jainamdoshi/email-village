@@ -46,3 +46,15 @@ A TypeScript CLI tool that automates filtering bounced emails from Gmail and cle
 - `src/state/` — Processed message tracking
 - `src/utils/` — Shared utilities
 - `src/types.ts` — Shared TypeScript interfaces
+
+## Documentation Rules
+- All user-facing documentation lives in `docs/`
+- When adding a new feature, command, or config option — update `docs/` to reflect the change
+- When modifying existing behavior — update the relevant doc page so it stays accurate
+- When fixing a bug that changes user-visible behavior — document the corrected behavior
+- `docs/setup.md` — Google Cloud setup and first-run walkthrough
+- `docs/usage.md` — CLI commands, flags, and examples
+- `docs/architecture.md` — Technical architecture for contributors
+- Keep docs concise and written for a non-developer audience (product manager is the primary user)
+- Include real command examples, not abstract placeholders
+- A `README.md` at the project root should link to the docs and provide a quick-start summary
