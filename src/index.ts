@@ -8,7 +8,8 @@ import { buildBounceSearchQuery } from "./gmail/queries.js";
 import { isBounceMessage, getSubject } from "./parser/bounce-detector.js";
 import { extractBouncedRecipient } from "./parser/recipient-extractor.js";
 import { readCsv } from "./csv/reader.js";
-import { writeCsvFiles } from "./csv/writer.js";
+import { writeCsvFiles, writeBounceCsv } from "./csv/writer.js";
+import type { BounceCsvRecord } from "./csv/writer.js";
 import {
   loadProcessedState,
   saveProcessedState,
@@ -16,8 +17,10 @@ import {
   getProcessedCount,
 } from "./state/processed-store.js";
 import { normalizeEmail } from "./utils/email-normalize.js";
-import { printSummary, info, warn, error as logError } from "./utils/logger.js";
-import type { BounceRecord, ProcessingResult } from "./types.js";
+import { printSummary, printCollectSummary, info, warn, error as logError } from "./utils/logger.js";
+import type { BounceRecord, ProcessingResult, CollectResult } from "./types.js";
+import { existsSync } from "fs";
+import path from "path";
 
 const program = new Command();
 
@@ -73,6 +76,21 @@ program
 
     console.log(`Last run:            ${lastRun}`);
     console.log(`Total processed IDs: ${count}`);
+  });
+
+program
+  .command("collect")
+  .description("Collect bounced email addresses from Gmail and save to CSV")
+  .option("--output <path>", "Path for the output CSV file", "./bounced-emails.csv")
+  .option("--credentials <path>", "Path to Google OAuth2 credentials JSON", "./client_secret.json")
+  .option("--since <days>", "Look back N days for bounces", "30")
+  .action(async (options) => {
+    try {
+      await collectCommand(options);
+    } catch (err) {
+      logError(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
   });
 
 async function processCommand(options: {
@@ -211,6 +229,118 @@ async function processCommand(options: {
     saveProcessedState(processedState);
     info("State saved. These messages won't be re-processed next time.");
   }
+}
+
+async function collectCommand(options: {
+  output: string;
+  credentials: string;
+  since: string;
+}): Promise<void> {
+  const sinceDays = parseInt(options.since, 10);
+  if (isNaN(sinceDays) || sinceDays <= 0) {
+    throw new Error("--since must be a positive number of days");
+  }
+
+  // Validate output directory exists
+  const outputDir = path.dirname(path.resolve(options.output));
+  if (!existsSync(outputDir)) {
+    throw new Error(`Output directory does not exist: ${outputDir}`);
+  }
+
+  // Step 1: Authenticate with Gmail
+  info("Authenticating with Gmail...");
+  const auth = await getAuthenticatedClient(options.credentials);
+
+  // Step 2: Search for bounce messages
+  const query = buildBounceSearchQuery(sinceDays);
+  const messageIds = await searchBounceMessages(auth, query);
+
+  if (messageIds.length === 0) {
+    info("No bounce messages found. Your inbox is clean!");
+    return;
+  }
+
+  // Step 3: Filter out already-processed messages
+  const processedState = loadProcessedState();
+  const newMessageIds = messageIds.filter((id) => !processedState.has(id));
+
+  info(
+    `${messageIds.length} total bounces, ${newMessageIds.length} new (not previously processed).`
+  );
+
+  if (newMessageIds.length === 0) {
+    info("No new bounce messages to process.");
+    return;
+  }
+
+  // Step 4: Fetch full message details
+  info(`Fetching ${newMessageIds.length} message details...`);
+  const messages = await fetchMessagesWithDelay(auth, newMessageIds);
+
+  // Step 5: Parse bounce emails
+  const records: Map<string, BounceCsvRecord> = new Map();
+  const failedMessages: Array<{ messageId: string; subject: string }> = [];
+
+  for (const message of messages) {
+    const messageId = message.id || "unknown";
+
+    if (!isBounceMessage(message)) {
+      continue;
+    }
+
+    const extraction = extractBouncedRecipient(message);
+    if (extraction) {
+      const email = normalizeEmail(extraction.email);
+      const bounceDate = new Date(
+        parseInt(message.internalDate || "0", 10)
+      ).toISOString();
+
+      // Deduplicate: keep the most recent bounce per email
+      const existing = records.get(email);
+      if (!existing || bounceDate > existing.bounceDate) {
+        records.set(email, {
+          email,
+          bounceDate,
+          confidence: extraction.confidence,
+        });
+      }
+    } else {
+      failedMessages.push({
+        messageId,
+        subject: getSubject(message),
+      });
+    }
+  }
+
+  // Step 6: Write CSV
+  const csvRecords = Array.from(records.values());
+
+  if (csvRecords.length === 0) {
+    info("No bounced email addresses could be extracted.");
+    return;
+  }
+
+  const outputPath = path.resolve(options.output);
+  writeBounceCsv(outputPath, csvRecords);
+  info(`Bounced emails saved to: ${outputPath}`);
+
+  // Step 7: Print summary
+  const result: CollectResult = {
+    totalBounces: messageIds.length,
+    newBounces: newMessageIds.length,
+    uniqueEmails: csvRecords.length,
+    extractionFailures: failedMessages.length,
+    failedMessages,
+  };
+
+  printCollectSummary(result);
+
+  // Step 8: Update processed state
+  for (const id of newMessageIds) {
+    processedState.add(id);
+  }
+  saveProcessedState(processedState);
+  info("State saved. These messages won't be re-processed next time.");
 }
 
 program.parse();
