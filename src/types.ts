@@ -38,6 +38,14 @@ export interface ProcessingResult {
   failedMessages: Array<{ messageId: string; subject: string }>;
 }
 
+export interface CollectResult {
+  totalBounces: number;
+  newBounces: number;
+  uniqueEmails: number;
+  extractionFailures: number;
+  failedMessages: Array<{ messageId: string; subject: string }>;
+}
+
 export interface AppConfig {
   csvPath: string;
   emailColumn?: string;
