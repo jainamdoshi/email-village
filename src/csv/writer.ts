@@ -44,3 +44,27 @@ export function writeCsvFiles(
 
   return { validPath, invalidPath };
 }
+
+export interface BounceCsvRecord {
+  email: string;
+  bounceDate: string;
+  confidence: string;
+}
+
+export function writeBounceCsv(
+  outputPath: string,
+  records: BounceCsvRecord[]
+): void {
+  const rows = records.map((r) => ({
+    email: r.email,
+    bounce_date: r.bounceDate,
+    confidence: r.confidence,
+  }));
+
+  const csv = stringify(rows, {
+    header: true,
+    columns: ["email", "bounce_date", "confidence"],
+  });
+
+  writeFileSync(outputPath, csv);
+}
