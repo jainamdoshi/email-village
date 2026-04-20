@@ -33,29 +33,42 @@ Email Bouncer involves two Google accounts that can be different:
 2. Search for **Gmail API**
 3. Click on it and press **Enable**
 
-### Step 3: Configure the OAuth Consent Screen
+### Step 3: Configure OAuth on Google Auth Platform
 
-1. Go to **APIs & Services** > **OAuth consent screen**
-2. Choose **External** user type (or **Internal** if you're on Google Workspace and only your organization will use it)
-3. Fill in the required fields:
+After enabling the Gmail API, go to **Google Auth Platform** (you can find it in the left sidebar of the Cloud Console, or search for "Google Auth Platform" in the top search bar). You'll see a left sidebar with: Overview, Branding, Audience, Clients, Data Access, etc.
+
+#### 3a. Branding
+
+1. Click **Branding** in the left sidebar
+2. Fill in the required fields:
    - **App name**: `Email Bouncer`
    - **User support email**: Account A's email
-   - **Developer contact**: Account A's email
-4. Click **Save and Continue**
-5. On the **Scopes** page, click **Add or Remove Scopes**
-   - Search for `Gmail API` and check `gmail.readonly` (`https://www.googleapis.com/auth/gmail.readonly`)
-   - Click **Update**, then **Save and Continue**
-6. On the **Test users** page, click **Add Users** and add **Account B's email address** (the Gmail that receives bounces)
+   - **Developer contact email**: Account A's email
+3. Click **Save**
+
+#### 3b. Audience
+
+1. Click **Audience** in the left sidebar
+2. Choose **External** user type (or **Internal** if you're on Google Workspace and only your organization will use it)
+3. Under **Test users**, click **Add Users**
+4. Add **Account B's email address** (the Gmail that receives bounces)
    - If Account A and Account B are the same, just add that one email
    - You can add multiple email addresses if needed
-7. Click **Save and Continue**, then **Back to Dashboard**
+5. Click **Save**
 
-> **Important:** While your app is in "Testing" mode, only emails listed as test users (Step 3.6) can authenticate. If you skip this step, Account B will get an "Access blocked" error.
+> **Important:** While your app is in "Testing" mode, only emails listed as test users can authenticate. If you skip this step, Account B will get an "Access blocked" error.
+
+#### 3c. Data Access (Scopes)
+
+1. Click **Data Access** in the left sidebar
+2. Click **Add or Remove Scopes**
+3. Search for `Gmail API` and check `gmail.readonly` (`https://www.googleapis.com/auth/gmail.readonly`)
+4. Click **Update**, then **Save**
 
 ### Step 4: Create OAuth2 Credentials
 
-1. Go to **APIs & Services** > **Credentials**
-2. Click **Create Credentials** > **OAuth client ID**
+1. Click **Clients** in the left sidebar (still in Google Auth Platform)
+2. Click **Create Client** (or **Create OAuth client**)
 3. Choose **Desktop app** as the application type
 4. Name it `Email Bouncer CLI`
 5. Click **Create**
@@ -123,7 +136,7 @@ If Account B is a Google Workspace email (like `you@yourcompany.com`), there's o
 Make sure `client_secret.json` is in your project root, or specify the path with `--credentials /path/to/file.json`.
 
 ### "Access blocked: This app's request is invalid"
-Account B is not listed as a test user. Go back to Step 3.6 and add Account B's email address in the OAuth consent screen.
+Account B is not listed as a test user. Go back to Step 3b and add Account B's email address under **Audience** > **Test users**.
 
 ### "Access blocked" for a Google Workspace email
 Your Workspace admin may need to allow the app. See the [Google Workspace Note](#google-workspace-note) above.
