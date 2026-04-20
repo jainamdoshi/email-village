@@ -20,6 +20,9 @@ bun run src/index.ts process --csv your-emails.csv --dry-run
 
 # Run for real — removes bounced emails from your CSV
 bun run src/index.ts process --csv your-emails.csv
+
+# Just collect bounced emails into a CSV (no input CSV needed)
+bun run src/index.ts collect
 ```
 
 ## Requirements

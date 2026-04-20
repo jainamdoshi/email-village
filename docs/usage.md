@@ -41,6 +41,37 @@ bun run src/index.ts process --csv contacts.csv --dry-run
 bun run src/index.ts process --csv data.csv --email-column "Contact Email"
 ```
 
+### `collect` — Collect bounced emails to CSV
+
+```bash
+bun run src/index.ts collect
+```
+
+Pull all bounced email addresses from your Gmail and save them to a CSV file. Unlike `process`, this doesn't require an input CSV — it just extracts and saves the bounced addresses.
+
+The output CSV has three columns: `email`, `bounce_date`, and `confidence`.
+
+**Options:**
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--output <path>` | No | `./bounced-emails.csv` | Where to save the output CSV |
+| `--credentials <path>` | No | `./client_secret.json` | Path to Google OAuth2 credentials |
+| `--since <days>` | No | `30` | How many days back to search for bounces |
+
+**Examples:**
+
+```bash
+# Basic usage — saves to ./bounced-emails.csv
+bun run src/index.ts collect
+
+# Look back 60 days
+bun run src/index.ts collect --since 60
+
+# Save to a specific location
+bun run src/index.ts collect --output ~/Desktop/bounces.csv
+```
+
 ### `auth` — Authenticate with Gmail
 
 ```bash
