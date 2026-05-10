@@ -110,11 +110,29 @@ export async function getAuthenticatedClient(
   if (cachedToken) {
     oauth2Client.setCredentials(cachedToken);
 
-    // Test if token is still valid by checking expiry
     const tokenInfo = oauth2Client.credentials;
     if (tokenInfo.refresh_token) {
-      info("Using cached credentials.");
-      return oauth2Client;
+      // Validate the token actually works before returning
+      try {
+        await oauth2Client.getAccessToken();
+        info("Using cached credentials.");
+        return oauth2Client;
+      } catch (err: unknown) {
+        const message =
+          err instanceof Error ? err.message : String(err);
+        if (
+          message.includes("invalid_grant") ||
+          message.includes("Token has been expired or revoked")
+        ) {
+          logError(
+            "Your Gmail authorization has expired. Re-authenticating..."
+          );
+          clearCachedToken();
+          // Fall through to browser auth flow below
+        } else {
+          throw err;
+        }
+      }
     }
   }
 

@@ -19,7 +19,7 @@ import {
 import { normalizeEmail } from "./utils/email-normalize.js";
 import { printSummary, printCollectSummary, info, warn, error as logError } from "./utils/logger.js";
 import type { BounceRecord, ProcessingResult, CollectResult } from "./types.js";
-import { existsSync } from "fs";
+import { existsSync, statSync } from "fs";
 import path from "path";
 
 const program = new Command();
@@ -239,6 +239,12 @@ async function collectCommand(options: {
   const sinceDays = parseInt(options.since, 10);
   if (isNaN(sinceDays) || sinceDays <= 0) {
     throw new Error("--since must be a positive number of days");
+  }
+
+  // If --output is a directory, append the default filename
+  const resolvedOutput = path.resolve(options.output);
+  if (existsSync(resolvedOutput) && statSync(resolvedOutput).isDirectory()) {
+    options.output = path.join(resolvedOutput, "bounced-emails.csv");
   }
 
   // Validate output directory exists
