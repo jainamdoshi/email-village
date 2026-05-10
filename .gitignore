@@ -33,3 +33,5 @@ Thumbs.db
 
 # Output files
 invalid.csv
+bounced-emails.csv
+*_invalid.csv
