@@ -58,6 +58,10 @@ After enabling the Gmail API, go to **Google Auth Platform** (you can find it in
 
 > **Important:** While your app is in "Testing" mode, only emails listed as test users can authenticate. If you skip this step, Account B will get an "Access blocked" error.
 
+> **Collecting from multiple accounts?** Add **every** account you plan to scan
+> with `collect-all` here as a test user. Each one needs a one-time browser
+> sign-in the first time it is collected; after that its login is cached.
+
 #### 3c. Data Access (Scopes)
 
 1. Click **Data Access** in the left sidebar
