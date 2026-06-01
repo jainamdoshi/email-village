@@ -72,6 +72,54 @@ bun run src/index.ts collect --since 60
 bun run src/index.ts collect --output ~/Desktop/bounces.csv
 ```
 
+### `collect-all` — Collect bounces from multiple accounts
+
+```bash
+bun run src/index.ts collect-all
+```
+
+Authenticates a list of Gmail accounts and collects bounced email addresses
+from all of them into a single CSV. The account list comes from the
+`EMAIL_BOUNCER_ACCOUNTS` environment variable (comma-separated), which you can
+put in a `.env` file in the project root:
+
+```
+EMAIL_BOUNCER_ACCOUNTS=test1@gmail.com,test2@gmail.com
+```
+
+The first time each account is collected, a browser window opens for a one-time
+Google sign-in — **sign in with the account shown in the terminal prompt**.
+After that, each account's login is cached and future runs need no browser.
+
+Each account must be added as a **Test user** in Google Cloud Console first
+(see the setup guide), or its sign-in will be blocked.
+
+The output CSV has four columns: `source_account`, `email`, `bounce_date`, and
+`confidence`. Every run performs a fresh, complete scan of the look-back window
+across all accounts (it does not skip previously seen bounces).
+
+**Options:**
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--output <path>` | No | `./bounced-all.csv` | Where to save the combined CSV |
+| `--credentials <path>` | No | `./client_secret.json` | Path to Google OAuth2 credentials |
+| `--since <days>` | No | `30` | How many days back to search for bounces |
+
+**Examples:**
+
+```bash
+# Collect from all accounts in EMAIL_BOUNCER_ACCOUNTS
+bun run src/index.ts collect-all
+
+# Look back 60 days, save to a specific file
+bun run src/index.ts collect-all --since 60 --output ~/Desktop/all-bounces.csv
+```
+
+If an account fails to authenticate or you sign in with the wrong address, that
+account is skipped and reported in the summary at the end — the run continues
+with the remaining accounts.
+
 ### `auth` — Authenticate with Gmail
 
 ```bash
