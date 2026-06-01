@@ -82,3 +82,11 @@ export async function fetchMessagesWithDelay(
 
   return messages;
 }
+
+export async function getProfileEmailAddress(
+  auth: OAuth2Client
+): Promise<string> {
+  const gmail = google.gmail({ version: "v1", auth });
+  const response = await gmail.users.getProfile({ userId: "me" });
+  return response.data.emailAddress || "";
+}
