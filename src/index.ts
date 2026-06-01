@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import type { OAuth2Client } from "google-auth-library";
 import { getAuthenticatedClient, clearCachedToken } from "./auth/oauth.js";
 import {
   searchBounceMessages,
@@ -8,8 +9,12 @@ import { buildBounceSearchQuery } from "./gmail/queries.js";
 import { isBounceMessage, getSubject } from "./parser/bounce-detector.js";
 import { extractBouncedRecipient } from "./parser/recipient-extractor.js";
 import { readCsv } from "./csv/reader.js";
-import { writeCsvFiles, writeBounceCsv } from "./csv/writer.js";
-import type { BounceCsvRecord } from "./csv/writer.js";
+import {
+  writeCsvFiles,
+  writeBounceCsv,
+  writeCombinedBounceCsv,
+} from "./csv/writer.js";
+import type { BounceCsvRecord, CombinedBounceCsvRecord } from "./csv/writer.js";
 import {
   loadProcessedState,
   saveProcessedState,
@@ -17,6 +22,7 @@ import {
   getProcessedCount,
 } from "./state/processed-store.js";
 import { normalizeEmail } from "./utils/email-normalize.js";
+import { parseAccountsEnv } from "./utils/accounts.js";
 import { printSummary, printCollectSummary, info, warn, error as logError } from "./utils/logger.js";
 import type { BounceRecord, ProcessingResult, CollectResult } from "./types.js";
 import { existsSync, statSync } from "fs";
@@ -92,6 +98,99 @@ program
       process.exit(1);
     }
   });
+
+program
+  .command("collect-all")
+  .description(
+    "Authenticate accounts from EMAIL_BOUNCER_ACCOUNTS and collect bounces from all into one CSV"
+  )
+  .option(
+    "--output <path>",
+    "Path for the combined output CSV file",
+    "./bounced-all.csv"
+  )
+  .option(
+    "--credentials <path>",
+    "Path to Google OAuth2 credentials JSON",
+    "./client_secret.json"
+  )
+  .option("--since <days>", "Look back N days for bounces", "30")
+  .action(async (options) => {
+    try {
+      await collectAllCommand(options);
+    } catch (err) {
+      logError(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+async function fetchAndParseBounces(
+  auth: OAuth2Client,
+  messageIds: string[]
+): Promise<{
+  records: BounceCsvRecord[];
+  failedMessages: Array<{ messageId: string; subject: string }>;
+}> {
+  const messages = await fetchMessagesWithDelay(auth, messageIds);
+
+  const records: Map<string, BounceCsvRecord> = new Map();
+  const failedMessages: Array<{ messageId: string; subject: string }> = [];
+
+  for (const message of messages) {
+    const messageId = message.id || "unknown";
+
+    if (!isBounceMessage(message)) {
+      continue;
+    }
+
+    const extraction = extractBouncedRecipient(message);
+    if (extraction) {
+      const email = normalizeEmail(extraction.email);
+      const bounceDate = new Date(
+        parseInt(message.internalDate || "0", 10)
+      ).toISOString();
+
+      // Deduplicate: keep the most recent bounce per email
+      const existing = records.get(email);
+      if (!existing || bounceDate > existing.bounceDate) {
+        records.set(email, {
+          email,
+          bounceDate,
+          confidence: extraction.confidence,
+        });
+      }
+    } else {
+      failedMessages.push({
+        messageId,
+        subject: getSubject(message),
+      });
+    }
+  }
+
+  return { records: Array.from(records.values()), failedMessages };
+}
+
+async function collectBouncesForAccount(
+  auth: OAuth2Client,
+  sinceDays: number
+): Promise<{
+  records: BounceCsvRecord[];
+  failedMessages: Array<{ messageId: string; subject: string }>;
+  totalBounces: number;
+}> {
+  const query = buildBounceSearchQuery(sinceDays);
+  const messageIds = await searchBounceMessages(auth, query);
+
+  if (messageIds.length === 0) {
+    return { records: [], failedMessages: [], totalBounces: 0 };
+  }
+
+  const { records, failedMessages } = await fetchAndParseBounces(
+    auth,
+    messageIds
+  );
+  return { records, failedMessages, totalBounces: messageIds.length };
+}
 
 async function processCommand(options: {
   csv: string;
@@ -279,47 +378,14 @@ async function collectCommand(options: {
     return;
   }
 
-  // Step 4: Fetch full message details
+  // Step 4-5: Fetch and parse bounce emails
   info(`Fetching ${newMessageIds.length} message details...`);
-  const messages = await fetchMessagesWithDelay(auth, newMessageIds);
-
-  // Step 5: Parse bounce emails
-  const records: Map<string, BounceCsvRecord> = new Map();
-  const failedMessages: Array<{ messageId: string; subject: string }> = [];
-
-  for (const message of messages) {
-    const messageId = message.id || "unknown";
-
-    if (!isBounceMessage(message)) {
-      continue;
-    }
-
-    const extraction = extractBouncedRecipient(message);
-    if (extraction) {
-      const email = normalizeEmail(extraction.email);
-      const bounceDate = new Date(
-        parseInt(message.internalDate || "0", 10)
-      ).toISOString();
-
-      // Deduplicate: keep the most recent bounce per email
-      const existing = records.get(email);
-      if (!existing || bounceDate > existing.bounceDate) {
-        records.set(email, {
-          email,
-          bounceDate,
-          confidence: extraction.confidence,
-        });
-      }
-    } else {
-      failedMessages.push({
-        messageId,
-        subject: getSubject(message),
-      });
-    }
-  }
+  const { records: csvRecords, failedMessages } = await fetchAndParseBounces(
+    auth,
+    newMessageIds
+  );
 
   // Step 6: Write CSV
-  const csvRecords = Array.from(records.values());
 
   if (csvRecords.length === 0) {
     info("No bounced email addresses could be extracted.");
@@ -347,6 +413,89 @@ async function collectCommand(options: {
   }
   saveProcessedState(processedState);
   info("State saved. These messages won't be re-processed next time.");
+}
+
+async function collectAllCommand(options: {
+  output: string;
+  credentials: string;
+  since: string;
+}): Promise<void> {
+  const sinceDays = parseInt(options.since, 10);
+  if (isNaN(sinceDays) || sinceDays <= 0) {
+    throw new Error("--since must be a positive number of days");
+  }
+
+  const accounts = parseAccountsEnv(process.env.EMAIL_BOUNCER_ACCOUNTS);
+  if (accounts.length === 0) {
+    throw new Error(
+      "No accounts configured. Set EMAIL_BOUNCER_ACCOUNTS in your .env file, e.g.:\n" +
+        "  EMAIL_BOUNCER_ACCOUNTS=test1@gmail.com,test2@gmail.com"
+    );
+  }
+
+  // Resolve output path (allow passing a directory)
+  let outputPath = path.resolve(options.output);
+  if (existsSync(outputPath) && statSync(outputPath).isDirectory()) {
+    outputPath = path.join(outputPath, "bounced-all.csv");
+  }
+  const outputDir = path.dirname(outputPath);
+  if (!existsSync(outputDir)) {
+    throw new Error(`Output directory does not exist: ${outputDir}`);
+  }
+
+  info(
+    `Collecting bounces from ${accounts.length} account(s): ${accounts.join(
+      ", "
+    )}`
+  );
+
+  const combined: CombinedBounceCsvRecord[] = [];
+  const succeeded: string[] = [];
+  const skipped: Array<{ account: string; reason: string }> = [];
+
+  for (const account of accounts) {
+    info(`\n=== ${account} ===`);
+    try {
+      const auth = await getAuthenticatedClient(options.credentials, account);
+      const { records, failedMessages, totalBounces } =
+        await collectBouncesForAccount(auth, sinceDays);
+
+      for (const record of records) {
+        combined.push({ ...record, sourceAccount: account });
+      }
+      succeeded.push(account);
+      info(
+        `${account}: ${records.length} unique bounced address(es) from ` +
+          `${totalBounces} bounce message(s)` +
+          (failedMessages.length > 0
+            ? `, ${failedMessages.length} extraction failure(s)`
+            : "") +
+          "."
+      );
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      logError(`Skipping ${account}: ${reason}`);
+      skipped.push({ account, reason });
+    }
+  }
+
+  if (succeeded.length === 0) {
+    throw new Error("No accounts could be processed. See the errors above.");
+  }
+
+  writeCombinedBounceCsv(outputPath, combined);
+
+  console.log("\n--- Multi-Account Collection Summary ---");
+  console.log(`Accounts processed:  ${succeeded.length}/${accounts.length}`);
+  console.log(`Total bounces saved: ${combined.length}`);
+  console.log(`Output file:         ${outputPath}`);
+  if (skipped.length > 0) {
+    console.log("\nSkipped accounts:");
+    for (const item of skipped) {
+      console.log(`  - ${item.account}: ${item.reason}`);
+    }
+  }
+  console.log("----------------------------------------\n");
 }
 
 program.parse();
