@@ -12,6 +12,8 @@ import { createServer } from "http";
 import open from "open";
 import { loadCredentials } from "./credentials.js";
 import { info, error as logError } from "../utils/logger.js";
+import { getProfileEmailAddress } from "../gmail/client.js";
+import { normalizeEmail } from "../utils/email-normalize.js";
 
 const SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"];
 const TOKEN_DIR = path.join(
@@ -19,30 +21,32 @@ const TOKEN_DIR = path.join(
   ".email-bouncer"
 );
 const TOKEN_PATH = path.join(TOKEN_DIR, "token.json");
+const TOKENS_DIR = path.join(TOKEN_DIR, "tokens");
 const CALLBACK_PORT = 3000;
 
-function ensureTokenDir(): void {
-  if (!existsSync(TOKEN_DIR)) {
-    mkdirSync(TOKEN_DIR, { recursive: true, mode: 0o700 });
-  }
+function tokenPathForAccount(account: string): string {
+  return path.join(TOKENS_DIR, `${account}.json`);
 }
 
-function loadCachedToken(): Record<string, unknown> | null {
-  if (!existsSync(TOKEN_PATH)) {
+function loadCachedToken(tokenPath: string): Record<string, unknown> | null {
+  if (!existsSync(tokenPath)) {
     return null;
   }
   try {
-    const raw = readFileSync(TOKEN_PATH, "utf-8");
+    const raw = readFileSync(tokenPath, "utf-8");
     return JSON.parse(raw);
   } catch {
     return null;
   }
 }
 
-function saveToken(token: Record<string, unknown>): void {
-  ensureTokenDir();
-  writeFileSync(TOKEN_PATH, JSON.stringify(token, null, 2), { mode: 0o600 });
-  chmodSync(TOKEN_PATH, 0o600);
+function saveToken(token: Record<string, unknown>, tokenPath: string): void {
+  const dir = path.dirname(tokenPath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  }
+  writeFileSync(tokenPath, JSON.stringify(token, null, 2), { mode: 0o600 });
+  chmodSync(tokenPath, 0o600);
 }
 
 async function getCodeFromBrowser(authUrl: string): Promise<string> {
@@ -94,9 +98,11 @@ async function getCodeFromBrowser(authUrl: string): Promise<string> {
 }
 
 export async function getAuthenticatedClient(
-  credentialsPath: string
+  credentialsPath: string,
+  account?: string
 ): Promise<OAuth2Client> {
   const creds = loadCredentials(credentialsPath);
+  const tokenPath = account ? tokenPathForAccount(account) : TOKEN_PATH;
 
   const redirectUri = `http://localhost:${CALLBACK_PORT}/callback`;
   const oauth2Client = new OAuth2Client(
@@ -106,16 +112,19 @@ export async function getAuthenticatedClient(
   );
 
   // Try cached token first
-  const cachedToken = loadCachedToken();
+  const cachedToken = loadCachedToken(tokenPath);
   if (cachedToken) {
     oauth2Client.setCredentials(cachedToken);
 
-    const tokenInfo = oauth2Client.credentials;
-    if (tokenInfo.refresh_token) {
+    if (oauth2Client.credentials.refresh_token) {
       // Validate the token actually works before returning
       try {
         await oauth2Client.getAccessToken();
-        info("Using cached credentials.");
+        info(
+          account
+            ? `Using cached credentials for ${account}.`
+            : "Using cached credentials."
+        );
         return oauth2Client;
       } catch (err: unknown) {
         const message =
@@ -125,9 +134,11 @@ export async function getAuthenticatedClient(
           message.includes("Token has been expired or revoked")
         ) {
           logError(
-            "Your Gmail authorization has expired. Re-authenticating..."
+            account
+              ? `Authorization for ${account} expired. Re-authenticating...`
+              : "Your Gmail authorization has expired. Re-authenticating..."
           );
-          clearCachedToken();
+          clearCachedToken(tokenPath);
           // Fall through to browser auth flow below
         } else {
           throw err;
@@ -143,19 +154,38 @@ export async function getAuthenticatedClient(
     prompt: "consent",
   });
 
+  if (account) {
+    info(`Sign in as ${account} in the browser window that opens.`);
+  }
+
   const code = await getCodeFromBrowser(authUrl);
   const { tokens } = await oauth2Client.getToken(code);
   oauth2Client.setCredentials(tokens);
 
-  saveToken(tokens as Record<string, unknown>);
-  info("Authentication successful. Token cached.");
+  // When an account is expected, verify the signed-in identity before saving.
+  if (account) {
+    const actual = await getProfileEmailAddress(oauth2Client);
+    if (normalizeEmail(actual) !== normalizeEmail(account)) {
+      throw new Error(
+        `Signed in as ${actual}, but expected ${account}. ` +
+          `Token not saved — re-run and sign in with the correct account.`
+      );
+    }
+  }
+
+  saveToken(tokens as Record<string, unknown>, tokenPath);
+  info(
+    account
+      ? `Authentication successful for ${account}. Token cached.`
+      : "Authentication successful. Token cached."
+  );
 
   return oauth2Client;
 }
 
-export function clearCachedToken(): boolean {
-  if (existsSync(TOKEN_PATH)) {
-    unlinkSync(TOKEN_PATH);
+export function clearCachedToken(tokenPath: string = TOKEN_PATH): boolean {
+  if (existsSync(tokenPath)) {
+    unlinkSync(tokenPath);
     return true;
   }
   return false;
