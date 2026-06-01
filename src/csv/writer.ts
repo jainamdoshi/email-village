@@ -68,3 +68,26 @@ export function writeBounceCsv(
 
   writeFileSync(outputPath, csv);
 }
+
+export interface CombinedBounceCsvRecord extends BounceCsvRecord {
+  sourceAccount: string;
+}
+
+export function writeCombinedBounceCsv(
+  outputPath: string,
+  records: CombinedBounceCsvRecord[]
+): void {
+  const rows = records.map((r) => ({
+    source_account: r.sourceAccount,
+    email: r.email,
+    bounce_date: r.bounceDate,
+    confidence: r.confidence,
+  }));
+
+  const csv = stringify(rows, {
+    header: true,
+    columns: ["source_account", "email", "bounce_date", "confidence"],
+  });
+
+  writeFileSync(outputPath, csv);
+}
