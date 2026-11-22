@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "bun:test";
-import { writeBounceCsv } from "../../src/csv/writer.js";
+import { writeBounceCsv, writeEmailListCsv } from "../../src/csv/writer.js";
 import { readFileSync, unlinkSync } from "fs";
 import path from "path";
 
@@ -39,5 +39,20 @@ describe("writeBounceCsv", () => {
 
     expect(lines[0]).toBe("email,bounce_date,confidence");
     expect(lines).toHaveLength(1);
+  });
+});
+
+describe("writeEmailListCsv", () => {
+  it("writes a single email column", () => {
+    writeEmailListCsv(TEST_OUTPUT, ["alice@test.com", "bob@test.com"]);
+
+    const lines = readFileSync(TEST_OUTPUT, "utf-8").trim().split("\n");
+    expect(lines).toEqual(["email", "alice@test.com", "bob@test.com"]);
+  });
+
+  it("writes just the header for an empty list", () => {
+    writeEmailListCsv(TEST_OUTPUT, []);
+
+    expect(readFileSync(TEST_OUTPUT, "utf-8").trim()).toBe("email");
   });
 });

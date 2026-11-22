@@ -69,6 +69,14 @@ export function writeBounceCsv(
   writeFileSync(outputPath, csv);
 }
 
+export function writeEmailListCsv(outputPath: string, emails: string[]): void {
+  const csv = stringify(
+    emails.map((email) => ({ email })),
+    { header: true, columns: ["email"] }
+  );
+  writeFileSync(outputPath, csv);
+}
+
 export interface CombinedBounceCsvRecord extends BounceCsvRecord {
   sourceAccount: string;
 }

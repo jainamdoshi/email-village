@@ -23,6 +23,9 @@ bun run src/index.ts process --csv your-emails.csv
 
 # Just collect bounced emails into a CSV (no input CSV needed)
 bun run src/index.ts collect
+
+# Build an outreach list from every From/To/Cc/Bcc address in your mail
+bun run src/index.ts extract-contacts
 ```
 
 ## Requirements

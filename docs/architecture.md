@@ -33,16 +33,18 @@ CLI (commander)
 
 ### `src/gmail/`
 - **`queries.ts`** — Builds Gmail search queries for bounce detection
-- **`client.ts`** — Wraps Gmail API: paginated message list, full message fetch with rate limiting (100ms between requests)
+- **`client.ts`** — Wraps Gmail API: paginated message list, full message fetch with rate limiting (100ms between requests), full-mailbox listing and header-only fetch with 5 requests in flight and backoff on rate-limit errors (used by `extract-contacts`)
 
 ### `src/parser/`
 - **`mime-utils.ts`** — MIME tree walking, base64url decoding, delivery-status part extraction
 - **`bounce-detector.ts`** — Determines if a Gmail message is a bounce (checks sender, subject, headers)
 - **`recipient-extractor.ts`** — The core module. 4-layer pipeline that extracts the bounced email address from a bounce notification
+- **`address-extractor.ts`** — Pulls addresses out of From/To/Cc/Bcc header values (`extract-contacts`)
+- **`contact-filter.ts`** — Drops your own and automated (noreply, notifications, mailer-daemon…) addresses, dedupes and sorts
 
 ### `src/csv/`
 - **`reader.ts`** — Reads CSV, auto-detects email column, returns structured data
-- **`writer.ts`** — Writes valid/invalid CSVs, appends to existing invalid file
+- **`writer.ts`** — Writes valid/invalid CSVs, appends to existing invalid file; single-column email list for `extract-contacts`
 
 ### `src/state/`
 - **`processed-store.ts`** — Tracks processed Gmail message IDs in `~/.email-bouncer/processed.json`
@@ -73,6 +75,14 @@ The 4-layer pipeline is the most critical part of the system. Each layer is trie
 7. **Split** — Separate CSV into valid and invalid rows
 8. **Write** — Save updated CSV and invalid file
 9. **State** — Record processed message IDs for next run
+
+### `extract-contacts` flow
+
+1. **List** — Page through every message ID per account (no query, or `newer_than:Nd` with `--since`)
+2. **Fetch** — `format: metadata` with only From/To/Cc/Bcc, 5 concurrent; unreadable messages are counted and skipped
+3. **Extract** — Regex the addresses out of each header into one shared set
+4. **Filter** — Remove account addresses and automated senders, sort
+5. **Write** — Overwrite the output CSV (single `email` column)
 
 ## Key Design Decisions
 

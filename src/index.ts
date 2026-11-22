@@ -4,7 +4,15 @@ import { getAuthenticatedClient, clearCachedToken } from "./auth/oauth.js";
 import {
   searchBounceMessages,
   fetchMessagesWithDelay,
+  listAllMessageIds,
+  forEachMessageHeaders,
+  getProfileEmailAddress,
 } from "./gmail/client.js";
+import {
+  ADDRESS_HEADERS,
+  extractAddressesFromMessage,
+} from "./parser/address-extractor.js";
+import { filterContacts } from "./parser/contact-filter.js";
 import { buildBounceSearchQuery } from "./gmail/queries.js";
 import { isBounceMessage, getSubject } from "./parser/bounce-detector.js";
 import { extractBouncedRecipient } from "./parser/recipient-extractor.js";
@@ -13,6 +21,7 @@ import {
   writeCsvFiles,
   writeBounceCsv,
   writeCombinedBounceCsv,
+  writeEmailListCsv,
 } from "./csv/writer.js";
 import type { BounceCsvRecord, CombinedBounceCsvRecord } from "./csv/writer.js";
 import {
@@ -124,6 +133,80 @@ program
     }
   });
 
+program
+  .command("extract-contacts")
+  .description(
+    "Extract every From/To/Cc/Bcc address from all mail in the EMAIL_EXTRACT_ACCOUNTS accounts into one CSV"
+  )
+  .option(
+    "--output <path>",
+    "Path for the output CSV file",
+    "./extracted-contacts.csv"
+  )
+  .option(
+    "--credentials <path>",
+    "Path to Google OAuth2 credentials JSON",
+    "./client_secret.json"
+  )
+  .option("--since <days>", "Only scan mail from the last N days (default: all time)")
+  .action(async (options) => {
+    try {
+      await extractContactsCommand(options);
+    } catch (err) {
+      logError(err instanceof Error ? err.message : String(err));
+      process.exit(1);
+    }
+  });
+
+function parseSinceDays(value: string): number {
+  const sinceDays = parseInt(value, 10);
+  if (isNaN(sinceDays) || sinceDays <= 0) {
+    throw new Error("--since must be a positive number of days");
+  }
+  return sinceDays;
+}
+
+// Appends defaultFilename when --output points at a directory.
+function resolveOutputPath(output: string, defaultFilename: string): string {
+  let outputPath = path.resolve(output);
+  if (existsSync(outputPath) && statSync(outputPath).isDirectory()) {
+    outputPath = path.join(outputPath, defaultFilename);
+  }
+  const outputDir = path.dirname(outputPath);
+  if (!existsSync(outputDir)) {
+    throw new Error(`Output directory does not exist: ${outputDir}`);
+  }
+  return outputPath;
+}
+
+// A failing account is logged and reported, never thrown.
+async function forEachAccount(
+  accounts: string[],
+  credentials: string,
+  fn: (auth: OAuth2Client, account: string) => Promise<void>
+): Promise<{
+  succeeded: string[];
+  skipped: Array<{ account: string; reason: string }>;
+}> {
+  const succeeded: string[] = [];
+  const skipped: Array<{ account: string; reason: string }> = [];
+
+  for (const account of accounts) {
+    info(`\n=== ${account} ===`);
+    try {
+      const auth = await getAuthenticatedClient(credentials, account);
+      await fn(auth, account);
+      succeeded.push(account);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      logError(`Skipping ${account}: ${reason}`);
+      skipped.push({ account, reason });
+    }
+  }
+
+  return { succeeded, skipped };
+}
+
 async function fetchAndParseBounces(
   auth: OAuth2Client,
   messageIds: string[]
@@ -199,10 +282,7 @@ async function processCommand(options: {
   since: string;
   dryRun: boolean;
 }): Promise<void> {
-  const sinceDays = parseInt(options.since, 10);
-  if (isNaN(sinceDays) || sinceDays <= 0) {
-    throw new Error("--since must be a positive number of days");
-  }
+  const sinceDays = parseSinceDays(options.since);
 
   // Step 1: Read CSV
   info(`Reading CSV file: ${options.csv}`);
@@ -335,10 +415,7 @@ async function collectCommand(options: {
   credentials: string;
   since: string;
 }): Promise<void> {
-  const sinceDays = parseInt(options.since, 10);
-  if (isNaN(sinceDays) || sinceDays <= 0) {
-    throw new Error("--since must be a positive number of days");
-  }
+  const sinceDays = parseSinceDays(options.since);
 
   // If --output is a directory, append the default filename
   const resolvedOutput = path.resolve(options.output);
@@ -420,10 +497,7 @@ async function collectAllCommand(options: {
   credentials: string;
   since: string;
 }): Promise<void> {
-  const sinceDays = parseInt(options.since, 10);
-  if (isNaN(sinceDays) || sinceDays <= 0) {
-    throw new Error("--since must be a positive number of days");
-  }
+  const sinceDays = parseSinceDays(options.since);
 
   const accounts = parseAccountsEnv(process.env.EMAIL_BOUNCER_ACCOUNTS);
   if (accounts.length === 0) {
@@ -433,15 +507,7 @@ async function collectAllCommand(options: {
     );
   }
 
-  // Resolve output path (allow passing a directory)
-  let outputPath = path.resolve(options.output);
-  if (existsSync(outputPath) && statSync(outputPath).isDirectory()) {
-    outputPath = path.join(outputPath, "bounced-all.csv");
-  }
-  const outputDir = path.dirname(outputPath);
-  if (!existsSync(outputDir)) {
-    throw new Error(`Output directory does not exist: ${outputDir}`);
-  }
+  const outputPath = resolveOutputPath(options.output, "bounced-all.csv");
 
   info(
     `Collecting bounces from ${accounts.length} account(s): ${accounts.join(
@@ -450,20 +516,17 @@ async function collectAllCommand(options: {
   );
 
   const combined: CombinedBounceCsvRecord[] = [];
-  const succeeded: string[] = [];
-  const skipped: Array<{ account: string; reason: string }> = [];
 
-  for (const account of accounts) {
-    info(`\n=== ${account} ===`);
-    try {
-      const auth = await getAuthenticatedClient(options.credentials, account);
+  const { succeeded, skipped } = await forEachAccount(
+    accounts,
+    options.credentials,
+    async (auth, account) => {
       const { records, failedMessages, totalBounces } =
         await collectBouncesForAccount(auth, sinceDays);
 
       for (const record of records) {
         combined.push({ ...record, sourceAccount: account });
       }
-      succeeded.push(account);
       info(
         `${account}: ${records.length} unique bounced address(es) from ` +
           `${totalBounces} bounce message(s)` +
@@ -472,12 +535,8 @@ async function collectAllCommand(options: {
             : "") +
           "."
       );
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      logError(`Skipping ${account}: ${reason}`);
-      skipped.push({ account, reason });
     }
-  }
+  );
 
   if (succeeded.length === 0) {
     throw new Error("No accounts could be processed. See the errors above.");
@@ -496,6 +555,98 @@ async function collectAllCommand(options: {
     }
   }
   console.log("----------------------------------------\n");
+}
+
+async function extractContactsCommand(options: {
+  output: string;
+  credentials: string;
+  since?: string;
+}): Promise<void> {
+  const query =
+    options.since !== undefined
+      ? `newer_than:${parseSinceDays(options.since)}d`
+      : undefined;
+
+  const accounts = parseAccountsEnv(process.env.EMAIL_EXTRACT_ACCOUNTS);
+  if (accounts.length === 0) {
+    throw new Error(
+      "No accounts configured. Set EMAIL_EXTRACT_ACCOUNTS in your .env file, e.g.:\n" +
+        "  EMAIL_EXTRACT_ACCOUNTS=me@gmail.com,work@gmail.com"
+    );
+  }
+
+  const outputPath = resolveOutputPath(options.output, "extracted-contacts.csv");
+
+  info(
+    `Extracting contacts from ${accounts.length} account(s)` +
+      (query ? ` (last ${options.since} days)` : " (all time)") +
+      "."
+  );
+
+  const allAddresses = new Set<string>();
+  const ownAddresses = new Set<string>(accounts);
+  let messagesScanned = 0;
+  let messagesFailed = 0;
+
+  const { succeeded, skipped } = await forEachAccount(
+    accounts,
+    options.credentials,
+    async (auth, account) => {
+      const profileEmail = await getProfileEmailAddress(auth);
+      if (profileEmail) {
+        ownAddresses.add(profileEmail);
+      }
+
+      const messageIds = await listAllMessageIds(auth, query);
+      info(`${account}: ${messageIds.length} message(s) to scan.`);
+
+      const { fetched, failed } = await forEachMessageHeaders(
+        auth,
+        messageIds,
+        ADDRESS_HEADERS,
+        (message) => {
+          for (const address of extractAddressesFromMessage(message)) {
+            allAddresses.add(address);
+          }
+        }
+      );
+
+      messagesScanned += fetched;
+      messagesFailed += failed;
+      info(
+        `${account}: scanned ${fetched} message(s)` +
+          (failed > 0 ? `, ${failed} could not be read` : "") +
+          "."
+      );
+    }
+  );
+
+  if (succeeded.length === 0) {
+    throw new Error("No accounts could be processed. See the errors above.");
+  }
+
+  const { kept, removedOwn, removedAutomated } = filterContacts(
+    allAddresses,
+    ownAddresses
+  );
+  writeEmailListCsv(outputPath, kept);
+
+  console.log("\n--- Contact Extraction Summary ---");
+  console.log(`Accounts processed:      ${succeeded.length}/${accounts.length}`);
+  console.log(`Messages scanned:        ${messagesScanned}`);
+  console.log(`Messages unreadable:     ${messagesFailed}`);
+  console.log(`Unique addresses found:  ${allAddresses.size}`);
+  console.log(`Removed (your accounts): ${removedOwn}`);
+  console.log(`Removed (automated):     ${removedAutomated}`);
+  console.log(`Contacts saved:          ${kept.length}`);
+  console.log(`Output file:             ${outputPath}`);
+  if (skipped.length > 0) {
+    console.log("\nSkipped accounts:");
+    for (const item of skipped) {
+      console.log(`  - ${item.account}: ${item.reason}`);
+    }
+  }
+  console.log("----------------------------------\n");
 }
 
 program.parse();

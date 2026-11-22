@@ -120,6 +120,68 @@ If an account fails to authenticate or you sign in with the wrong address, that
 account is skipped and reported in the summary at the end — the run continues
 with the remaining accounts.
 
+### `extract-contacts` — Build an outreach list from all your mail
+
+```bash
+bun run src/index.ts extract-contacts
+```
+
+Scans every message in one or more Gmail accounts (inbox, sent, archive and all
+labels; spam and trash are skipped) and saves every unique address from the
+**From**, **To**, **Cc** and **Bcc** lines into one CSV.
+
+The account list comes from the `EMAIL_EXTRACT_ACCOUNTS` environment variable
+(comma-separated), separate from the bounce accounts. Put it in `.env`:
+
+```
+EMAIL_EXTRACT_ACCOUNTS=me@gmail.com,work@gmail.com
+```
+
+Sign-in works the same as `collect-all`: a one-time browser login per account,
+cached after that. Each account must be a **Test user** in Google Cloud Console.
+
+What gets removed before saving:
+- **Your own addresses** — every account in the list, plus the address Gmail
+  reports for each signed-in account
+- **Automated senders** — `noreply@`, `no-reply@`, `donotreply@`,
+  `notifications@`, `notify@`, `mailer-daemon@`, `postmaster@`, `bounce@`,
+  `autoreply@`, GitHub-style `reply+…@` addresses, and anything on a `bounces.`
+  or `noreply.` domain
+- **Duplicates** — addresses are lowercased, so `Jane@X.com` and `jane@x.com`
+  count once
+
+The output CSV has a single `email` column, sorted A–Z. The file is overwritten
+on every run.
+
+**Bcc note:** Gmail only keeps Bcc on mail *you* sent. Bcc recipients of mail
+you received are never visible, so they can't be extracted.
+
+**Options:**
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--output <path>` | No | `./extracted-contacts.csv` | Where to save the CSV |
+| `--credentials <path>` | No | `./client_secret.json` | Path to Google OAuth2 credentials |
+| `--since <days>` | No | all time | Only scan mail from the last N days |
+
+**Examples:**
+
+```bash
+# Quick test run on the last day of mail (separate file so it doesn't overwrite a full run)
+bun run src/index.ts extract-contacts --since 1 --output ./extracted-contacts-test.csv
+
+# Full mailbox, all accounts
+bun run src/index.ts extract-contacts
+
+# Save somewhere else
+bun run src/index.ts extract-contacts --output ~/Desktop/outreach.csv
+```
+
+A full mailbox can take a while (tens of thousands of messages means minutes,
+not seconds). Progress is printed as it goes. The summary at the end shows how many
+messages were scanned, how many couldn't be read, and how many addresses were
+removed as your own or automated. Addresses are never printed to the terminal.
+
 ### `auth` — Authenticate with Gmail
 
 ```bash

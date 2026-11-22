@@ -14,6 +14,7 @@ A TypeScript CLI tool that automates filtering bounced emails from Gmail and cle
 - `bun run src/index.ts process --csv <file>` — Process bounces and update CSV
 - `bun run src/index.ts auth` — Authenticate with Gmail
 - `bun run src/index.ts status` — Show last run status
+- `bun run src/index.ts extract-contacts` — Extract all From/To/Cc/Bcc addresses from `EMAIL_EXTRACT_ACCOUNTS` into a CSV
 - `bun test` — Run all tests
 - `bun run typecheck` — Run TypeScript type checking
 
