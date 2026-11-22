@@ -33,7 +33,7 @@ CLI (commander)
 
 ### `src/gmail/`
 - **`queries.ts`** — Builds Gmail search queries for bounce detection
-- **`client.ts`** — Wraps Gmail API: paginated message list, full message fetch with rate limiting (100ms between requests), full-mailbox listing and header-only fetch with 5 requests in flight and backoff on rate-limit errors (used by `extract-contacts`)
+- **`client.ts`** — Wraps Gmail API: paginated message list, full message fetch with rate limiting (100ms between requests), full-mailbox listing and header-only fetch with 5 requests in flight, a 30s per-request timeout, and backoff on rate-limit and network errors (used by `extract-contacts`)
 
 ### `src/parser/`
 - **`mime-utils.ts`** — MIME tree walking, base64url decoding, delivery-status part extraction

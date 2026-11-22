@@ -94,8 +94,11 @@ export async function getProfileEmailAddress(
 const LIST_PAGE_SIZE = 500;
 // Gmail allows ~50 metadata gets/sec per user; 5 in flight stays under it.
 const MESSAGE_FETCH_CONCURRENCY = 5;
-const RATE_LIMIT_MAX_RETRIES = 5;
-const RATE_LIMIT_BASE_DELAY_MS = 1000;
+// Abort requests stuck on a dead connection (e.g. after the Mac sleeps).
+// gaxios ignores its own `timeout` option under Bun, so this uses an AbortSignal.
+const REQUEST_TIMEOUT_MS = 30_000;
+const RETRY_MAX_RETRIES = 5;
+const RETRY_BASE_DELAY_MS = 1000;
 const LIST_PROGRESS_EVERY = 5000;
 const FETCH_PROGRESS_EVERY = 1000;
 const RATE_LIMIT_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded"]);
@@ -120,15 +123,25 @@ function isRateLimitError(err: unknown): boolean {
   );
 }
 
-async function withRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
+// No HTTP response: a timeout or dropped connection (also any other non-HTTP error).
+function isNetworkError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { response?: unknown }).response === undefined
+  );
+}
+
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      if (!isRateLimitError(err) || attempt >= RATE_LIMIT_MAX_RETRIES) {
+      const retryable = isRateLimitError(err) || isNetworkError(err);
+      if (!retryable || attempt >= RETRY_MAX_RETRIES) {
         throw err;
       }
-      await delay(RATE_LIMIT_BASE_DELAY_MS * 2 ** attempt);
+      await delay(RETRY_BASE_DELAY_MS * 2 ** attempt);
     }
   }
 }
@@ -144,13 +157,13 @@ export async function listAllMessageIds(
   let nextProgress = LIST_PROGRESS_EVERY;
 
   do {
-    const response = await withRateLimitRetry(() =>
+    const response = await withRetry(() =>
       gmail.users.messages.list({
         userId: "me",
         q: query,
         maxResults: LIST_PAGE_SIZE,
         pageToken,
-      })
+      }, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
     );
 
     for (const msg of response.data.messages ?? []) {
@@ -189,13 +202,13 @@ export async function forEachMessageHeaders(
     while (nextIndex < messageIds.length) {
       const id = messageIds[nextIndex++];
       try {
-        const response = await withRateLimitRetry(() =>
+        const response = await withRetry(() =>
           gmail.users.messages.get({
             userId: "me",
             id,
             format: "metadata",
             metadataHeaders: [...headers],
-          })
+          }, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
         );
         onMessage(response.data);
         fetched++;

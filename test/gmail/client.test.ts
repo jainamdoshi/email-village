@@ -6,6 +6,7 @@ const pages: Record<string, { messages: Array<{ id: string }>; nextPageToken?: s
 };
 const listCalls: Array<{ q?: string; pageToken?: string }> = [];
 let rateLimitedOnce = false;
+let networkFailedOnce = false;
 
 mock.module("googleapis", () => ({
   google: {
@@ -18,7 +19,11 @@ mock.module("googleapis", () => ({
           },
           get: async (params: { id: string }) => {
             if (params.id === "bad") {
-              throw new Error("boom");
+              throw { response: { status: 404 } };
+            }
+            if (params.id === "flaky" && !networkFailedOnce) {
+              networkFailedOnce = true;
+              throw new Error("socket hang up");
             }
             if (params.id === "limited" && !rateLimitedOnce) {
               rateLimitedOnce = true;
@@ -54,16 +59,17 @@ describe("listAllMessageIds", () => {
 });
 
 describe("forEachMessageHeaders", () => {
-  it("counts failures, retries rate limits and visits the rest", async () => {
+  it("counts failures, retries rate limits and network errors, visits the rest", async () => {
     const seen: string[] = [];
     const result = await forEachMessageHeaders(
       auth,
-      ["a", "bad", "limited", "b"],
+      ["a", "bad", "limited", "flaky", "b"],
       ["From"],
       (m) => seen.push(m.id ?? "")
     );
-    expect(result).toEqual({ fetched: 3, failed: 1 });
-    expect(seen.sort()).toEqual(["a", "b", "limited"]);
+    expect(result).toEqual({ fetched: 4, failed: 1 });
+    expect(seen.sort()).toEqual(["a", "b", "flaky", "limited"]);
     expect(rateLimitedOnce).toBe(true);
+    expect(networkFailedOnce).toBe(true);
   });
 });
