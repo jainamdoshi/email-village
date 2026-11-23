@@ -1,4 +1,5 @@
 import { describe, it, expect, mock } from "bun:test";
+import { GaxiosError } from "gaxios";
 
 const pages: Record<string, { messages: Array<{ id: string }>; nextPageToken?: string }> = {
   first: { messages: [{ id: "a" }, { id: "b" }], nextPageToken: "p2" },
@@ -7,6 +8,7 @@ const pages: Record<string, { messages: Array<{ id: string }>; nextPageToken?: s
 const listCalls: Array<{ q?: string; pageToken?: string }> = [];
 let rateLimitedOnce = false;
 let networkFailedOnce = false;
+let brokenCalls = 0;
 
 mock.module("googleapis", () => ({
   google: {
@@ -23,7 +25,11 @@ mock.module("googleapis", () => ({
             }
             if (params.id === "flaky" && !networkFailedOnce) {
               networkFailedOnce = true;
-              throw new Error("socket hang up");
+              throw new GaxiosError("socket hang up", {});
+            }
+            if (params.id === "broken") {
+              brokenCalls++;
+              throw new TypeError("coding error");
             }
             if (params.id === "limited" && !rateLimitedOnce) {
               rateLimitedOnce = true;
@@ -59,17 +65,18 @@ describe("listAllMessageIds", () => {
 });
 
 describe("forEachMessageHeaders", () => {
-  it("counts failures, retries rate limits and network errors, visits the rest", async () => {
+  it("retries rate limits and network errors, not coding errors, and visits the rest", async () => {
     const seen: string[] = [];
     const result = await forEachMessageHeaders(
       auth,
-      ["a", "bad", "limited", "flaky", "b"],
+      ["a", "bad", "broken", "limited", "flaky", "b"],
       ["From"],
       (m) => seen.push(m.id ?? "")
     );
-    expect(result).toEqual({ fetched: 4, failed: 1 });
+    expect(result).toEqual({ fetched: 4, failed: 2 });
     expect(seen.sort()).toEqual(["a", "b", "flaky", "limited"]);
     expect(rateLimitedOnce).toBe(true);
     expect(networkFailedOnce).toBe(true);
+    expect(brokenCalls).toBe(1);
   });
 });

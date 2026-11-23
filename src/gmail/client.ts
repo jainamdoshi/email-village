@@ -1,4 +1,5 @@
 import { google } from "googleapis";
+import { GaxiosError } from "gaxios";
 import type { OAuth2Client } from "google-auth-library";
 import type { GmailMessage } from "../types.js";
 import { info } from "../utils/logger.js";
@@ -123,13 +124,10 @@ function isRateLimitError(err: unknown): boolean {
   );
 }
 
-// No HTTP response: a timeout or dropped connection (also any other non-HTTP error).
+// A GaxiosError with no response failed below HTTP: timeout, reset, refused or DNS.
+// Bun's codes differ from Node's (e.g. "ConnectionRefused"), so match the shape, not codes.
 function isNetworkError(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    (err as { response?: unknown }).response === undefined
-  );
+  return err instanceof GaxiosError && err.response === undefined;
 }
 
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
